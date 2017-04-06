@@ -194,3 +194,58 @@ also used by the `csrf_meta_tags` method.
         end
       end
     ```
+    
+    
+## Token Validation
+
+### Setup
+
+In the controller, call `protect_from_forgery` with settings, where settings can be:
+
+- `:exception` - Raises ActionController::InvalidAuthenticityToken exception.
+- `:reset_session` - Resets the session.
+- `:null_session` - Provides an empty session during request but doesn't reset it completely. Used as default if <tt>:with</tt> option is not specified.
+
+### Internel
+
+- in actionpack/lib/action_controller/metal/request_forgery_protection.rb:122
+
+```ruby
+      def protect_from_forgery(options = {})
+        options = options.reverse_merge(prepend: false)
+
+        self.forgery_protection_strategy = protection_method_class(options[:with] || :null_session)
+        self.request_forgery_protection_token ||= :authenticity_token
+        before_action :verify_authenticity_token, options
+        append_after_action :verify_same_origin_request
+      end
+```
+
+The `protect_from_forgery` would add the following filters into the controller:
+
+- verify_authenticity_token
+- verify_same_origin_request
+  
+#### verify_authenticity_token
+
+- in actionpack/lib/action_controller/metal/request_forgery_protection.rb:211
+
+    ```ruby
+      def verify_authenticity_token
+        # no need to verify if it is GET request
+        mark_for_same_origin_verification!
+
+        if !verified_request?
+          if logger && log_warning_on_csrf_failure
+            logger.warn "Can't verify CSRF token authenticity."
+          end
+          handle_unverified_request
+        end
+      end
+    
+      # Line 266
+      def verified_request?
+        !protect_against_forgery? || request.get? || request.head? ||
+          (valid_request_origin? && any_authenticity_token_valid?)
+      end
+    ```
