@@ -7,7 +7,7 @@ This repo is to demo the CSRF defense in Rails.
 - [application.html.erb](app/views/layouts/application.html.erb#L5): the
   `csrf_meta_tags` would load CSRF token into the current web page:
 
-  ![Token in Header](docs/token_in_header.png)
+  ![Token in Header](docs/token_in_header_1.png)
   
   
 ## How Meta Tag is generated
@@ -67,7 +67,7 @@ corresponding token, here's the logic:
       end
     ```
     
-where the `real_csrf_token` would generate token based on the current session:
+where the `real_csrf_token` would generate token randomly, and stored in the current session:
 
 - in rails/actionpack/lib/action_controller/metal/request_forgery_protection.rb:367
 
@@ -77,3 +77,11 @@ where the `real_csrf_token` would generate token based on the current session:
         Base64.strict_decode64(session[:_csrf_token])
       end
     ```
+    
+Because it is stored in the session, it doesn't change over time. This might leads to a "reply attack": sniff the
+network traffic, get the token, reply the attack.
+
+The `one_time_pad` is generated to mask the token, to overcome the [breach attack](https://www.youtube.com/watch?v=T4iTwNLPv4g),
+which relies on some reflected content from the original request to guess the HTTPS secret.
+
+
