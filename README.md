@@ -248,4 +248,109 @@ The `protect_from_forgery` would add the following filters into the controller:
         !protect_against_forgery? || request.get? || request.head? ||
           (valid_request_origin? && any_authenticity_token_valid?)
       end
+    
+      # Line 399
+      def valid_request_origin?
+        if forgery_protection_origin_check
+          # We accept blank origin headers because some user agents don't send it.
+          request.origin.nil? || request.origin == request.base_url
+        else
+          true
+        end
+      end
+    
+      # Line 272
+      def any_authenticity_token_valid?
+        request_authenticity_tokens.any? do |token|
+          valid_authenticity_token?(session, token)
+        end
+      end
+    
+  
+      # Line 308
+    
+      # Checks the client's masked token to see if it matches the
+      # session token. Essentially the inverse of
+      # +masked_authenticity_token+.
+      def valid_authenticity_token?(session, encoded_masked_token)
+        if encoded_masked_token.nil? || encoded_masked_token.empty? || !encoded_masked_token.is_a?(String)
+          return false
+        end
+
+        begin
+          masked_token = Base64.strict_decode64(encoded_masked_token)
+        rescue ArgumentError # encoded_masked_token is invalid Base64
+          return false
+        end
+
+        # See if it's actually a masked token or not. In order to
+        # deploy this code, we should be able to handle any unmasked
+        # tokens that we've issued without error.
+
+        if masked_token.length == AUTHENTICITY_TOKEN_LENGTH
+          # This is actually an unmasked token. This is expected if
+          # you have just upgraded to masked tokens, but should stop
+          # happening shortly after installing this gem
+          compare_with_real_token masked_token, session
+
+        elsif masked_token.length == AUTHENTICITY_TOKEN_LENGTH * 2
+          csrf_token = unmask_token(masked_token)
+
+          compare_with_real_token(csrf_token, session) ||
+            valid_per_form_csrf_token?(csrf_token, session)
+        else
+          false # Token is malformed
+        end
+      end
+    
+      # Line 350
+      def compare_with_real_token(token, session)
+        ActiveSupport::SecurityUtils.secure_compare(token, real_csrf_token(session))
+      end
     ```
+
+The chunk of code above is how Rails validate CSRF token:
+
+1. token is stored in the session, which is provided by the client side
+2. the `verify_authenticity_token` would check, for the non-GET and non-HEAD method, 2 things:
+  1. if the origin matches
+  2. if the token matches
+3. token can be passed in 2 places:
+  1. from form data
+  2. from HTTP header (`verify_authenticity_token`)
+  
+      ```ruby
+      # actionpack/lib/action_controller/metal/request_forgery_protection.rb:280
+      def request_authenticity_tokens
+        [form_authenticity_param, request.x_csrf_token]
+      end
+      ```
+      
+#### verify_same_origin_request
+  
+After the page is rendered, another `verify_same_origin_request` verification would be done. This is only done upon the
+GET request.
+
+- in actionpack/lib/action_controller/metal/request_forgery_protection.rb:236
+
+    ```ruby
+      def verify_same_origin_request
+        if marked_for_same_origin_verification? && non_xhr_javascript_response?
+          logger.warn CROSS_ORIGIN_JAVASCRIPT_WARNING if logger
+          raise ActionController::InvalidCrossOriginRequest, CROSS_ORIGIN_JAVASCRIPT_WARNING
+        end
+      end
+    
+      # Line 255
+      # Check for cross-origin JavaScript responses.
+      def non_xhr_javascript_response?
+        content_type =~ %r(\Atext/javascript) && !request.xhr?
+      end
+    ```
+
+`marked_for_same_origin_verification?` would only be marked when it's a GET request, and `non_xhr_javascript_response?`
+would check check if the response type is javascript, and the request is non-XHR. It usually means JSONP request.
+
+I think Rails discoverage the use of JSONP request, because it has potential issue of 
+[CSRF](https://en.wikipedia.org/wiki/JSONP#Cross-site_request_forgery).
+An example endpoint is `/books/jsonp` -- it's serving a JSONP endpoint, and blocked by Rails by default.
